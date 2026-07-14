@@ -70,6 +70,14 @@
   .note{font-size:11px;color:var(--sub);margin-top:6px}
   .legend{display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--sub);margin-top:8px}
   .legend span b{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:4px;vertical-align:middle}
+  .markbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 10px;font-size:12px}
+  .markbar .stat{color:var(--sub);font-weight:600}
+  .condtools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0}
+  .chk{white-space:nowrap}
+  .chk label{display:inline-flex;align-items:center;gap:3px;font-size:11px;margin-right:8px;cursor:pointer;color:var(--sub)}
+  .chk input{cursor:pointer;margin:0}
+  tr.done>td{opacity:.4}
+  tr.done>td.chk{opacity:.85}
 </style>
 </head>
 <body>
@@ -116,7 +124,15 @@
       </div>
     </div>
     <div style="margin-top:12px">
-      <label style="font-size:11px;color:var(--sub);font-weight:600">미충족 조건 (선택 시 해당 조건이 남은 이벤트만 · 여러 개면 모두 포함)</label>
+      <label style="font-size:11px;color:var(--sub);font-weight:600">미충족 조건</label>
+      <div class="condtools">
+        <div class="seg" id="condMode">
+          <button data-v="and" class="on">모두 포함 (AND)</button>
+          <button data-v="or">하나라도 (OR)</button>
+        </div>
+        <div class="chip" id="condAll">전체 선택</div>
+        <div class="chip" id="condClear">전체 해제</div>
+      </div>
       <div class="chips" id="condChips" style="margin-top:6px"></div>
       <div class="legend" id="condLegend"></div>
     </div>
@@ -129,6 +145,13 @@
   <div class="tabs">
     <div class="tab on" data-tab="hosp">🏥 병원 중심</div>
     <div class="tab" data-tab="event">📋 이벤트 리스트</div>
+  </div>
+
+  <div class="markbar">
+    <span class="stat" id="markstat"></span>
+    <div class="chip" id="hideDoneChip">✅ 반영완료 숨기기</div>
+    <button class="btn-reset" id="clearMarks">체크 전체 초기화</button>
+    <span class="note" style="margin:0">탭핑·반영 체크는 이 컴퓨터에 저장됩니다.</span>
   </div>
 
   <div id="hospView">
@@ -156,6 +179,8 @@
     <div class="tablewrap">
       <table id="evTable">
         <thead><tr>
+          <th>체크</th>
+          <th data-k="id">ID</th>
           <th data-k="hosp">병원명</th>
           <th data-k="title">이벤트명</th>
           <th data-k="type">유형</th>
@@ -184,7 +209,7 @@ const DISTS = [...new Set(DATA.map(d=>d.dist))].filter(Boolean).sort();
 const CHARGES = [...new Set(DATA.map(d=>d.charge))].filter(Boolean).sort();
 
 const state = {q:"",type:"",win:"",recOnly:false,dists:new Set(),charges:new Set(),conds:new Set(),tab:"hosp",
-  hsort:{k:"cnt",asc:false}, esort:{k:"nc",asc:true}, subSort:{k:"nc",asc:true}, open:new Set()};
+  hsort:{k:"cnt",asc:false}, esort:{k:"nc",asc:true}, subSort:{k:"nc",asc:true}, condMode:"and", hideDone:false, open:new Set()};
 
 document.getElementById("ts").textContent = "총 " + DATA.length.toLocaleString() + "건";
 
@@ -203,6 +228,24 @@ const leg=document.getElementById("condLegend");
 COND.forEach(d=>{const s=document.createElement("span");s.innerHTML='<b style="background:'+CCOLOR[d]+'"></b>'+d;leg.appendChild(s);});
 const recChip=document.getElementById("recChip");
 recChip.onclick=()=>{state.recOnly=!state.recOnly;recChip.classList.toggle("on",state.recOnly);render();};
+// 미충족 조건 AND/OR + 전체선택/해제
+document.querySelectorAll("#condMode button").forEach(b=>b.onclick=()=>{document.querySelectorAll("#condMode button").forEach(x=>x.classList.remove("on"));b.classList.add("on");state.condMode=b.dataset.v;render();});
+function setCondChip(c,on){c.classList.toggle("on",on);if(on){c.style.background=CCOLOR[c.dataset.c];c.style.borderColor=CCOLOR[c.dataset.c];}else{c.style.background="";c.style.borderColor="";}}
+document.getElementById("condAll").onclick=()=>{state.conds=new Set(COND);document.querySelectorAll("#condChips .chip").forEach(c=>setCondChip(c,true));render();};
+document.getElementById("condClear").onclick=()=>{state.conds.clear();document.querySelectorAll("#condChips .chip").forEach(c=>setCondChip(c,false));render();};
+// 탭핑/반영 체크 (이 컴퓨터에 저장)
+let marks={};try{marks=JSON.parse(localStorage.getItem("kr5_marks_v1")||"{}");}catch(e){marks={};}
+function saveMarks(){try{localStorage.setItem("kr5_marks_v1",JSON.stringify(marks));}catch(e){}}
+function mk(id){return marks[id]||{};}
+function chkCell(id){const m=mk(id);return '<td class="chk"><label title="탭핑(컨택) 여부"><input type="checkbox" class="mkbox" data-id="'+id+'" data-f="tap"'+(m.tap?" checked":"")+'>탭핑</label><label title="태그 반영 여부"><input type="checkbox" class="mkbox" data-id="'+id+'" data-f="done"'+(m.done?" checked":"")+'>반영</label></td>';}
+function updateMarkStat(){const v=Object.values(marks);document.getElementById("markstat").textContent="✔ 탭핑 "+v.filter(m=>m.tap).length+" · 반영 "+v.filter(m=>m.done).length+" (저장됨)";}
+document.addEventListener("change",e=>{const t=e.target;if(!t.classList||!t.classList.contains("mkbox"))return;
+  const id=t.dataset.id,f=t.dataset.f;const m=marks[id]||(marks[id]={});m[f]=t.checked;if(!m.tap&&!m.done)delete marks[id];saveMarks();
+  const tr=t.closest("tr");if(tr)tr.classList.toggle("done",!!(marks[id]&&marks[id].done));
+  if(state.hideDone&&f==="done"&&t.checked&&tr)tr.style.display="none";
+  updateMarkStat();});
+document.getElementById("hideDoneChip").onclick=()=>{state.hideDone=!state.hideDone;document.getElementById("hideDoneChip").classList.toggle("on",state.hideDone);render();};
+document.getElementById("clearMarks").onclick=()=>{if(confirm("이 컴퓨터에 저장된 탭핑·반영 체크를 모두 지울까요?")){marks={};saveMarks();render();}};
 
 document.getElementById("q").oninput=e=>{state.q=e.target.value.trim().toLowerCase();render();};
 document.querySelectorAll("#typeSeg button").forEach(b=>b.onclick=()=>{document.querySelectorAll("#typeSeg button").forEach(x=>x.classList.remove("on"));b.classList.add("on");state.type=b.dataset.v;render();});
@@ -210,6 +253,9 @@ document.querySelectorAll("#winSeg button").forEach(b=>b.onclick=()=>{document.q
 document.getElementById("reset").onclick=()=>{state.q="";state.type="";state.win="";state.recOnly=false;state.dists.clear();state.charges.clear();state.conds.clear();
   document.getElementById("q").value="";
   document.getElementById("recChip").classList.remove("on");
+  state.condMode="and";state.hideDone=false;
+  document.querySelectorAll("#condMode button").forEach(x=>x.classList.toggle("on",x.dataset.v==="and"));
+  document.getElementById("hideDoneChip").classList.remove("on");
   document.querySelectorAll("#typeSeg button,#winSeg button").forEach((x,i)=>x.classList.toggle("on",x.dataset.v===""));
   document.querySelectorAll("#distChips .chip,#chargeChips .chip,#condChips .chip").forEach(c=>{c.classList.remove("on");c.style.background="";c.style.borderColor="";});
   render();};
@@ -231,8 +277,12 @@ function filtered(){
     if(state.win==="2" && d.nc>2)return false;
     if(state.dists.size && !state.dists.has(d.dist))return false;
     if(state.charges.size && !state.charges.has(d.charge))return false;
-    if(state.conds.size){for(const c of state.conds)if(!d.unmet.includes(c))return false;}
-    if(state.q){const s=(d.hosp+" "+d.title+" "+d.charge+" "+d.tags).toLowerCase();if(!s.includes(state.q))return false;}
+    if(state.hideDone && mk(d.id).done)return false;
+    if(state.conds.size){
+      if(state.condMode==="or"){if(![...state.conds].some(c=>d.unmet.includes(c)))return false;}
+      else{for(const c of state.conds)if(!d.unmet.includes(c))return false;}
+    }
+    if(state.q){const s=(d.hosp+" "+d.title+" "+d.charge+" "+d.tags+" "+d.id).toLowerCase();if(!s.includes(state.q))return false;}
     return true;
   });
 }
@@ -304,8 +354,8 @@ function renderHosp(rows){
       const car=k=>ss.k===k?(ss.asc?" ▴":" ▾"):"";
       const sh=(k,label,num)=>'<th class="sub-th'+(num?" num":"")+'" data-sk="'+k+'" style="position:static;cursor:pointer;background:#f4f6fb">'+label+car(k)+'</th>';
       html+='<tr class="subtable"><td colspan="10"><table style="width:100%">'
-        +'<tr>'+sh("title","이벤트명")+sh("type","유형")+sh("nc","남은조건",1)+sh("unmet","미충족 조건")+sh("rec","추천 태그")+sh("opt","옵션",1)+sh("cas","증례",1)+sh("rev","평가",1)+'</tr>';
-      its.forEach(r=>{html+='<tr><td>'+r.title+'</td><td><span class="pill type">'+r.type+'</span></td>'
+        +'<tr><th style="position:static;background:#f4f6fb">체크</th>'+sh("title","이벤트명")+'<th style="position:static;background:#f4f6fb">ID</th>'+sh("type","유형")+sh("nc","남은조건",1)+sh("unmet","미충족 조건")+sh("rec","추천 태그")+sh("opt","옵션",1)+sh("cas","증례",1)+sh("rev","평가",1)+'</tr>';
+      its.forEach(r=>{html+='<tr class="'+(mk(r.id).done?"done":"")+'">'+chkCell(r.id)+'<td>'+r.title+'</td><td class="muted">'+r.id+'</td><td><span class="pill type">'+r.type+'</span></td>'
         +'<td class="num">'+r.nc+'</td><td>'+condBadges(r.unmet)+'</td><td>'+recBadges(r.rec)+'</td>'
         +'<td class="num">'+(r.opt??"-")+'</td><td class="num">'+(r.cas??"-")+'</td><td class="num">'+(r.rev??"-")+'</td></tr>';});
       html+='</table></td></tr>';
@@ -325,14 +375,17 @@ function renderEvents(rows){
   let arr=[...rows];
   arr.sort((a,b)=>{let x,y;
     if(["hosp","title","type","dist","charge"].includes(k)){x=a[k]||"";y=b[k]||"";return x<y?-asc:x>y?asc:0;}
+    if(k==="id"){x=+a.id;y=+b.id;return (x-y)*asc;}
     if(k==="unmet"){x=a.nc;y=b.nc;return (x-y)*asc;}
     if(k==="rec"){x=(a.rec[0]?a.rec[0].tier+a.rec[0].t:"~~");y=(b.rec[0]?b.rec[0].tier+b.rec[0].t:"~~");return x<y?-asc:x>y?asc:0;}
     x=a[k]??-1;y=b[k]??-1;return (x-y)*asc;});
   document.querySelectorAll("#evTable th").forEach(th=>{th.classList.remove("sorted","asc");if(th.dataset.k===k){th.classList.add("sorted");if(state.esort.asc)th.classList.add("asc");}});
   const body=document.getElementById("evBody");
   const view=arr.slice(0,1500);
-  if(!arr.length){body.innerHTML='<tr><td colspan="11" class="empty">조건에 맞는 이벤트가 없습니다.</td></tr>';}
-  else body.innerHTML=view.map(r=>'<tr>'
+  if(!arr.length){body.innerHTML='<tr><td colspan="13" class="empty">조건에 맞는 이벤트가 없습니다.</td></tr>';}
+  else body.innerHTML=view.map(r=>'<tr class="'+(mk(r.id).done?"done":"")+'">'
+    +chkCell(r.id)
+    +'<td class="muted">'+r.id+'</td>'
     +'<td><b>'+r.hosp+'</b></td><td>'+r.title+'</td>'
     +'<td><span class="pill type">'+r.type+'</span></td><td>'+r.dist+'</td><td>'+r.charge+'</td>'
     +'<td class="num">'+(r.nc===1?'<span class="pill win">1</span>':r.nc)+'</td>'
@@ -346,6 +399,7 @@ function render(){
   const rows=filtered();
   renderCards(rows);
   if(state.tab==="hosp")renderHosp(rows);else renderEvents(rows);
+  updateMarkStat();
 }
 render();
 </script>
